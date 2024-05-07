@@ -1,6 +1,6 @@
-"""Demo to show how to use lightweight_mmm in Streamlit.
+"""Demo to show how to use lightweight_mmm in Streamlit v2.0
 Author: Joel Orellana
-last update: 22-apr-2024"""
+last update: 07-may-2024"""
 
 import io
 import numpyro
@@ -24,17 +24,18 @@ from sklearn.metrics import mean_absolute_percentage_error
 from sklearn.pipeline import Pipeline
 from google.cloud import storage
 from google.oauth2 import service_account
-
+from gpt_vision import generate_insights_with_vision
 
 # streamlit settings
 st.set_page_config(layout="wide")
-st.markdown("<h1 style='text-align: center; color: white;'>Media Mix Model Analyzer</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center; color: black;'>Media Mix Model Analyzer</h1>", unsafe_allow_html=True)
 credentials = service_account.Credentials.from_service_account_info(st.secrets["GOOGLE_CREDENTIALS"])
 
 BUCKET_NAME = 'a0-mmm-models'
 CLIENT = storage.Client(credentials=credentials) # Initialize a client for Google Cloud Storage
 
 
+### FUNCTIONS USED IN STREAMLIT APP ##
 
 def add_holiday_columns_to_array(end_date,time_period):
     df = pd.DataFrame({'week': [pd.to_datetime(end_date) + pd.DateOffset(weeks=x) for x in range(1, time_period + 1)]})
@@ -73,6 +74,7 @@ def add_holiday_columns_to_array(end_date,time_period):
     return df
 
 
+@st.experimental_fragment
 def budget_allocator(n_weeks_to_predict, budget_to_allocate, mmm, media_scaler, target_scaler, prices, end_date):
     """Create a budget allocator function that takes the number of weeks to predict and the budget to allocate as inputs."""
     solution, kpi_without_optim, previous_media_allocation = optimize_media.find_optimal_budgets(
@@ -110,7 +112,6 @@ def read_model(selected_model):
     return file_path
 
 
-
 @st.cache_data(ttl=30)
 def load_model(model_path):
     model_file = open(model_path, 'rb')
@@ -139,24 +140,32 @@ def load_model(model_path):
     return name_model, start_date, end_date, media_scaler, target_scaler, media_names, cost_scaler, extra_scaler, prices, mmm, plot1, plot2, plot3, plot4, plot5
 
 
+## END OF FUNCTIONS ##
 
-
-
-
+## SELECT A MODEL TO WORK WITH ##
 model_list = select_model()
 selected_model = st.selectbox("Select a model from the list:", model_list, placeholder="Select a model", index=None) # default None
-if selected_model:
+if selected_model: 
     with st.spinner("Loading model..."):
         temp_file_model_path = read_model(selected_model)
         name_model, start_date, end_date, media_scaler, target_scaler, media_names, cost_scaler, extra_scaler, prices, mmm, plot1, plot2, plot3, plot4, plot5 = load_model(temp_file_model_path)
         st.success(f"Model {name_model} loaded successfully!")
-        # adding model info 
         st.info(f"Model was trained using data from {start_date} to {end_date} for {', '.join(media_names)}.")
+    ## MODEL SELECTED ##
+    ## USER MUST SELECT WHAT TO DO HERE ##
+    # 1. LOAD METRICS
+    # 2. CREATE AN AI REPORT
+    # 3. BUDGET ALLOCATION
+    # 4. FORECASTING ANALYSIS
+    options = ["Load Metrics", "Create AI Report", "Budget Allocation", "Forecasting Analysis"]
+    menu = st.radio("What would you like to do?", options, index=None, horizontal=True)
+    if menu == "Load Metrics":
         # Create columns for the plots only if there is a model
-        st.markdown("<h3 style='text-align: center; color: white;'>Model Report</h3>", unsafe_allow_html=True)
+        st.markdown("<h3 style='text-align: center; color: black;'>Model Report</h3>", unsafe_allow_html=True)
         col1, col2 = st.columns(2)
         with col1:
-            st.write(plot1)
+            with st.spinner("Loading plots..."):
+                st.write(plot1)
         with col2:
             st.write(plot2)
         st.write(plot3)
@@ -165,72 +174,104 @@ if selected_model:
             st.write(plot4)
         with col4:
             st.write(plot5)
-            
-    # new section Budget Allocator Predictor
-    st.markdown("<h3 style='text-align: center; color: white;'>Budget Estimator</h3>", unsafe_allow_html=True)
 
-    # Layout: Number of weeks, Budget, and Button in one row
-    col1, col2, col3, col4, col5 = st.columns(5)
-    with col1:
-        n_weeks_to_predict = st.number_input("Number of weeks to predict:", min_value=1, max_value=12, step=1, key='weeks_input')
-    with col3:
-        budget_to_allocate = st.number_input("Budget to allocate:", step=1000, min_value=1000, key='budget_input')
-    with col5:
-        st.markdown("<br>", unsafe_allow_html=True)
-        run_button = st.button('Run Budget Allocator')
 
-    # Button to trigger the budget allocator
-    if run_button:
-        with st.spinner("Calculating optimal budget allocation..."):
-            try:
-                solution, kpi_without_optim, previous_media_allocation = budget_allocator(
-                    n_weeks_to_predict, 
-                    budget_to_allocate, 
-                    mmm, 
-                    media_scaler, 
-                    target_scaler, 
-                    prices,
-                    end_date=end_date,
-                )
-                previous_budget_allocation = round(prices * previous_media_allocation, 2)
-                optimal_budget_allocation = round(prices * solution.x, 2)
-                table_data = pd.DataFrame({
-                    'Media': media_names,
-                    'Optimal Allocation': optimal_budget_allocation,
-                    'Previous Allocation': previous_budget_allocation
-                })
-                # Convert 'Optimal Allocation' to a float64 type
-                table_data['Optimal Allocation'] = table_data['Optimal Allocation'].astype('float64')
-                # Format the 'Optimal Allocation' column to two decimal places
-                table_data['Optimal Allocation'] = table_data['Optimal Allocation'].round(2)
-                # Convert 'Previous Allocation' to a float64 type
-                table_data['Previous Allocation'] = table_data['Previous Allocation'].astype('float64')
-                # Format the 'Previous Allocation' column to two decimal places
-                table_data['Previous Allocation'] = table_data['Previous Allocation'].round(2)
-                # add total to table
-                total_optimal = optimal_budget_allocation.sum()
-                total_previous = previous_budget_allocation.sum()
-                table_data.loc[len(table_data)] = ['Total', total_optimal, total_previous]
-                # Display the table only if total_optimal and total_previous are approximately equal
-                if abs(total_optimal - total_previous) < 10:
-                    st.success("Optimal budget allocation calculated.", icon="✅")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.write(table_data)
-                    with col2:
-                        st.write(plot.plot_pre_post_budget_allocation_comparison(media_mix_model=mmm,
-                                            kpi_with_optim=solution['fun'],
-                                            kpi_without_optim=kpi_without_optim,
-                                            optimal_buget_allocation=optimal_budget_allocation,
-                                            previous_budget_allocation=previous_budget_allocation,
-                                            figure_size=(10,8),
-                                            channel_names = media_names,
-                                            ))
-                else: # raise an streamlit error indicating that the budget is not realistic with the historical data
-                    st.error("The budget is not realistic with the historical data. Please change the budget or the number of weeks to predict.")
+    elif menu == "Create AI Report":
+        st.markdown("<h3 style='text-align: center; color: black;'>AI Report</h3>", unsafe_allow_html=True)
+        col5, col6 = st.columns(2)
+        with col5:
+            st.write(plot1)
+        with col6:
+            with st.spinner("Creating an AI report..."):
+                st.write(generate_insights_with_vision(figure=plot1, media_names=media_names))
+        col7, col8 = st.columns(2)
+        with col7:
+            st.write(plot2)
+        with col8:
+            with st.spinner("Creating an AI report..."):
+                st.write(generate_insights_with_vision(figure=plot2, media_names=media_names))
+        st.write(plot3)
+        with st.spinner("Creating an AI report..."):
+            st.write(generate_insights_with_vision(figure=plot3, media_names=media_names))
+        col9, col10 = st.columns(2)
+        with col9:
+            st.write(plot4)
+        with col10:
+            st.write(plot5)
+        col11, col12 = st.columns(2)
+        with col11:
+            with st.spinner("Creating an AI report..."):
+                st.write(generate_insights_with_vision(figure=plot4, media_names=media_names))
+        with col12:
+            with st.spinner("Creating an AI report..."):
+                st.write(generate_insights_with_vision(figure=plot5, media_names=media_names))
+    
+    elif menu == "Budget Allocation":
+        st.markdown("<h3 style='text-align: center; color: black;'>Budget Estimator</h3>", unsafe_allow_html=True)
+        # Layout: Number of weeks, Budget, and Button in one row
+        with st.form("estimator"):
+            col13, col14, col15, col16, col17 = st.columns(5)
+            with col13:
+                n_weeks_to_predict = st.number_input("Number of weeks to predict:", min_value=1, max_value=12, step=1, key='weeks_input')
+            with col15:
+                budget_to_allocate = st.number_input("Budget to allocate:", step=1000, min_value=1000, key='budget_input')
+            with col17:
+                st.markdown("<br>", unsafe_allow_html=True)
+                run_button = st.form_submit_button('Run Budget Allocator')
+                # Button to trigger the budget allocator
+            if run_button:
+                with st.spinner("Calculating optimal budget allocation..."):
+                    try:
+                        solution, kpi_without_optim, previous_media_allocation = budget_allocator(
+                            n_weeks_to_predict, 
+                            budget_to_allocate, 
+                            mmm, 
+                            media_scaler, 
+                            target_scaler, 
+                            prices,
+                            end_date=end_date,
+                        )
+                        previous_budget_allocation = round(prices * previous_media_allocation, 2)
+                        optimal_budget_allocation = round(prices * solution.x, 2)
+                        table_data = pd.DataFrame({
+                            'Media': media_names,
+                            'Optimal Allocation': optimal_budget_allocation,
+                            'Previous Allocation': previous_budget_allocation
+                        })
+                        # Convert 'Optimal Allocation' to a float64 type
+                        table_data['Optimal Allocation'] = table_data['Optimal Allocation'].astype('float64')
+                        # Format the 'Optimal Allocation' column to two decimal places
+                        table_data['Optimal Allocation'] = table_data['Optimal Allocation'].round(2)
+                        # Convert 'Previous Allocation' to a float64 type
+                        table_data['Previous Allocation'] = table_data['Previous Allocation'].astype('float64')
+                        # Format the 'Previous Allocation' column to two decimal places
+                        table_data['Previous Allocation'] = table_data['Previous Allocation'].round(2)
+                        # add total to table
+                        total_optimal = optimal_budget_allocation.sum()
+                        total_previous = previous_budget_allocation.sum()
+                        table_data.loc[len(table_data)] = ['Total', total_optimal, total_previous]
+                        # Display the table only if total_optimal and total_previous are approximately equal
+                        if abs(total_optimal - total_previous) < 10:
+                            st.success("Optimal budget allocation calculated.", icon="✅")
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.write(table_data)
+                            with col2:
+                                st.write(plot.plot_pre_post_budget_allocation_comparison(media_mix_model=mmm,
+                                                    kpi_with_optim=solution['fun'],
+                                                    kpi_without_optim=kpi_without_optim,
+                                                    optimal_buget_allocation=optimal_budget_allocation,
+                                                    previous_budget_allocation=previous_budget_allocation,
+                                                    figure_size=(10,8),
+                                                    channel_names = media_names,
+                                                    ))
+                        else: # raise an streamlit error indicating that the budget is not realistic with the historical data
+                            st.error("The budget is not realistic with the historical data. Please change the budget or the number of weeks to predict.")
 
-            except Exception as e:
-                st.error(f"Failed to run budget allocator: {e}") 
+                    except Exception as e:
+                        st.error(f"Failed to run budget allocator: {e}") 
+    else: 
+        st.warning("Please select an option to proceed.")
 
 else:
-    st.error("Please select a trained model to proceed.")
+    st.warning("Please select a MMM model to proceed.")
